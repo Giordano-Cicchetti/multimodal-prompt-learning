@@ -121,9 +121,13 @@ class MultiModalPromptLearner(nn.Module):
         prompts = [prompt_prefix + " " + name + "." for name in classnames]
 
         tokenized_prompts = torch.cat([clip.tokenize(p) for p in prompts])  # (n_cls, n_tkn)
+        print(f'tokenized_prompts.shape {tokenized_prompts.shape}')
         with torch.no_grad():
             embedding = clip_model.token_embedding(tokenized_prompts).type(dtype)
+            self.embedding = embedding
+            self.tokenized_prompts = tokenized_prompts
 
+        print(f'embedding.shape {embedding.shape}')
         # These token vectors will be saved when in save_model(),
         # but they should be ignored in load_model() as we want to use
         # those computed using the current class names

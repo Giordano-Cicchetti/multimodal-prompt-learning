@@ -453,7 +453,8 @@ class VisionTransformer_MaPLe(nn.Module):
 
         # After positional embeddings, we will attach prompts with the model, remember only those
         # are trainable parameters here in whole image encoder.
-        if self.VPT_shallow:
+
+        if self.VPT_shallow and not shared_ctx==[]:
             visual_ctx = shared_ctx.expand(x.shape[0], -1, -1).half()
             x = torch.cat([x, visual_ctx], dim=1)
         else:

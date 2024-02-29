@@ -1,6 +1,7 @@
 import os
 import pickle
 from collections import OrderedDict
+import json
 
 from dassl.data.datasets import DATASET_REGISTRY, Datum, DatasetBase
 from dassl.utils import listdir_nohidden, mkdir_if_missing
@@ -32,7 +33,7 @@ class ImageNet(DatasetBase):
             train = self.read_data(classnames, "train")
             # Follow standard practice to perform evaluation on the val set
             # Also used as the val set (so evaluate the last-step model)
-            test = self.read_data(classnames, "val")
+            test = self.read_data_val(classnames, "val")
 
             preprocessed = {"train": train, "test": test}
             with open(self.preprocessed, "wb") as f:
@@ -87,5 +88,25 @@ class ImageNet(DatasetBase):
                 impath = os.path.join(split_dir, folder, imname)
                 item = Datum(impath=impath, label=label, classname=classname)
                 items.append(item)
+
+        return items
+
+    def read_data_val(self, classnames, split_dir):
+        split_dir = os.path.join(self.image_dir, split_dir)
+        images = sorted(os.listdir(split_dir))
+        with open(os.path.join(self.dataset_dir, "ILSVRC2012_val_labels.json"), "rb") as f:
+            self.val_to_syn = json.load(f)
+            
+        items = []
+
+        for i , image in enumerate(images):
+            syn_id = self.val_to_syn[image]
+            classname = classnames[syn_id]
+            
+            label = list(classnames.keys()).index(syn_id)
+            
+            impath = os.path.join(split_dir, image)
+            item = Datum(impath=impath, label=label, classname=classname)
+            items.append(item)
 
         return items

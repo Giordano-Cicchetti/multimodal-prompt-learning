@@ -29,6 +29,7 @@ import trainers.zsclip
 import trainers.maple
 import trainers.independentVL
 import trainers.vpt
+import trainers.our
 
 def print_args(args, cfg):
     print("***************")
@@ -107,6 +108,14 @@ def extend_cfg(cfg):
     cfg.TRAINER.MAPLE.CTX_INIT = "a photo of a"  # initialization words
     cfg.TRAINER.MAPLE.PREC = "fp16"  # fp16, fp32, amp
     cfg.TRAINER.MAPLE.PROMPT_DEPTH = 9 # Max 12, minimum 0, for 1 it will act as shallow MaPLe (J=1)
+    cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
+    
+    # Config for Our
+    cfg.TRAINER.OUR = CN()
+    cfg.TRAINER.OUR.N_CTX = 2  # number of context vectors
+    cfg.TRAINER.OUR.CTX_INIT = "a photo of a"  # initialization words
+    cfg.TRAINER.OUR.PREC = "fp16"  # fp16, fp32, amp
+    cfg.TRAINER.OUR.PROMPT_DEPTH = 9 # Max 12, minimum 0, for 1 it will act as shallow MaPLe (J=1)
     cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
 
     # Config for independent Vision Language prompting (independent-vlp)

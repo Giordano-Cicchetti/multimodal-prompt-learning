@@ -4,7 +4,7 @@
 
 # custom config
 DATA="/mnt/media/giordano"
-TRAINER=MaPLe
+TRAINER=Our
 
 DATASET=$1
 SEED=$2
