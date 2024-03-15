@@ -3,8 +3,8 @@
 #cd ../..
 
 # custom config
-DATA="/path/to/dataset/folder"
-TRAINER=MaPLe
+DATA="/mnt/media/giordano"
+TRAINER=Our
 
 DATASET=$1
 SEED=$2
