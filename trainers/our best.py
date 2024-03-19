@@ -70,6 +70,9 @@ class QuaternionEncoder(nn.Module):
         self.bn2 = QuaternionBatchNorm2d(latent_dim * 4)
         
         self.mlp = QuaternionLinear(14*14*128, latent_dim * 4)
+        #self.mlp = PHMLinear(n=2, latent_dim*2, latent_dim*2)
+
+
         self.lr = nn.LeakyReLU()
         self.tanh = nn.Tanh()
         
@@ -87,8 +90,8 @@ class QuaternionEncoder(nn.Module):
         """Flatten and linear layer"""
         result = torch.flatten(result, start_dim=1)
         #result = self.lr(self.mlp(result))
-        result = self.lr(self.mlp(result))
-        result = self.bn2(result)
+        result = self.mlp(result)
+        #result = self.bn2(result)
         
         text_deep_prompts = []
         for index, layer in enumerate(self.text_projections):

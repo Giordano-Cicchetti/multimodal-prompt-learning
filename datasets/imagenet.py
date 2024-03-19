@@ -96,10 +96,11 @@ class ImageNet(DatasetBase):
         images = sorted(os.listdir(split_dir))
         with open(os.path.join(self.dataset_dir, "ILSVRC2012_val_labels.json"), "rb") as f:
             self.val_to_syn = json.load(f)
-            
+        #print(self.val_to_syn)
         items = []
 
         for i , image in enumerate(images):
+            #print(image)
             syn_id = self.val_to_syn[image]
             classname = classnames[syn_id]
             

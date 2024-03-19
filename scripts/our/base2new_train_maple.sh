@@ -3,7 +3,7 @@
 #cd ../..
 
 # custom config
-DATA="/mnt/media/giordano"
+DATA="G:\Giordano"
 TRAINER=Our
 
 DATASET=$1

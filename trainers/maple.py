@@ -108,13 +108,23 @@ class MultiModalPromptLearner(nn.Module):
 
         # Minimum can be 1, which defaults to shallow MaPLe
         # compound prompts
-        self.compound_prompts_text = nn.ParameterList([nn.Parameter(torch.empty(n_ctx, 512))
+        self.compound_prompts_text = nn.ParameterList([nn.Parameter(torch.empty(2, 512)) #n_ctx//2
                                                       for _ in range(self.compound_prompts_depth - 1)])
         for single_para in self.compound_prompts_text:
             nn.init.normal_(single_para, std=0.02)
         # Also make corresponding projection layers, for each prompt
         single_layer = nn.Linear(ctx_dim, 768)
-        self.compound_prompt_projections = _get_clones(single_layer, self.compound_prompts_depth - 1)
+        self.compound_prompt_projections_text = _get_clones(single_layer, self.compound_prompts_depth - 1)
+
+
+        ### VISION COMPOUND PROMPT 
+        self.compound_prompts_vision = nn.ParameterList([nn.Parameter(torch.empty(1, 768)) #n_ctx//2
+                                                      for _ in range(self.compound_prompts_depth - 1)])
+        for single_para in self.compound_prompts_vision:
+            nn.init.normal_(single_para, std=0.02)
+        # Also make corresponding projection layers, for each prompt
+        single_layer_vision = nn.Linear(768, 512)
+        self.compound_prompt_projections_vision = _get_clones(single_layer_vision, self.compound_prompts_depth - 1)       
 
         classnames = [name.replace("_", " ") for name in classnames]
         name_lens = [len(_tokenizer.encode(name)) for name in classnames]
@@ -173,11 +183,17 @@ class MultiModalPromptLearner(nn.Module):
         # Before returning, need to transform
         # prompts to 768 for the visual side
         visual_deep_prompts = []
-        for index, layer in enumerate(self.compound_prompt_projections):
-            visual_deep_prompts.append(layer(self.compound_prompts_text[index]))
+        for index, layer in enumerate(self.compound_prompt_projections_text):
+            visual_deep_prompts.append(torch.cat((layer(self.compound_prompts_text[index]),self.compound_prompts_vision [index]),0))
         # Now the other way around
         # We will project the textual prompts from 512 to 768
-        return prompts, self.proj(self.ctx), self.compound_prompts_text, visual_deep_prompts   # pass here original, as for visual 768 is required
+            
+        text_deep_prompts = []
+        for index, layer in enumerate(self.compound_prompt_projections_vision):
+            text_deep_prompts.append(torch.cat((layer(self.compound_prompts_vision[index]),self.compound_prompts_text[index]),0))
+
+        
+        return prompts, self.proj(self.ctx), text_deep_prompts, visual_deep_prompts   # pass here original, as for visual 768 is required
 
 
 class CustomCLIP(nn.Module):

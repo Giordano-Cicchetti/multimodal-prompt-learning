@@ -19,8 +19,8 @@ from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
 
 
 from quaternion_core.quaternion_layers import (QuaternionConv, QuaternionLinear,
-                               QuaternionTransposeConv,QuaternionBatchNorm2d)
-from quaternion_core.ph_layers import PHMLinear
+                               QuaternionTransposeConv , QuaternionBatchNorm2d)
+
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 
 
@@ -39,43 +39,42 @@ class QuaternionEncoder(nn.Module):
         latent_dim: int,
         hidden_dims: List = None,
         n: int = 100,
-        depth: int = 9,
-        n_ctx: int = 2,
         **kwargs
     ):
         super(QuaternionEncoder, self).__init__()
-        self.n_ctx = n_ctx
+
         self.latent_dim = latent_dim
         self.n = n
-
-        #self.mlp = QuaternionLinear(14*14*128, latent_dim * 4)
-        self.mlp = PHMLinear(n=2,in_features=self.latent_dim*2,out_features=latent_dim*2)
-        #self.lr = nn.LeakyReLU()
-
+        # self.hidden_dims = hidden_dims
         
-        #self.textLinear = QuaternionLinear(latent_dim * 4, 4*128*n_ctx)
-        self.textLinear = PHMLinear(n=2,in_features=self.latent_dim*2,out_features=512*2)
-        self.text_projections = nn.ModuleList([copy.deepcopy(self.textLinear) for _ in range(depth)])
-        
+        modules = []
+        if hidden_dims is None:
+            hidden_dims = [16,32,64,128]
 
-        #self.visionLinear = QuaternionLinear(latent_dim * 4, 4*192*n_ctx)
-        self.visionLinear = PHMLinear(n=2,in_features=self.latent_dim*2,out_features=768*2)
-        self.vision_projections = nn.ModuleList([copy.deepcopy(self.visionLinear) for _ in range(depth)])
-        
+        # Build Encoder with quaternion convolutions
+        for h_dim in hidden_dims:
+            modules.append(
+                nn.Sequential(
+                    QuaternionConv(in_channels, out_channels=h_dim,
+                                kernel_size=3, stride=2, padding=[1, 1], dilatation=[1, 1]),
+                    #QuaternionBatchNorm2d(h_dim),
+                    nn.LeakyReLU())
+            )
+            in_channels = h_dim
+
+        self.encoder = nn.Sequential(*modules)
+
+        self.mlp = QuaternionLinear(14*14*128, latent_dim * 4)
+        self.lr = nn.LeakyReLU()
 
     def forward(self, input, **kwargs):
-
-        result = self.mlp(input)
+        """Encode input images in latent space"""
+        result = self.encoder(input)
         
-        text_deep_prompts = []
-        for index, layer in enumerate(self.text_projections):
-            text_deep_prompts.append(layer(result).reshape(-1,self.n_ctx,512))
-            
-        vision_deep_prompts = []
-        for index, layer in enumerate(self.vision_projections):
-            vision_deep_prompts.append(layer(result).reshape(-1,self.n_ctx,768))
-        
-        return text_deep_prompts,vision_deep_prompts
+        """Flatten and linear layer"""
+        result = torch.flatten(result, start_dim=1)
+        result = self.mlp(result)
+        return result
 
 
     
@@ -254,30 +253,41 @@ class QuaternionMultiModalPromptLearner(nn.Module):
         self.compound_prompts_depth = cfg.TRAINER.OUR.PROMPT_DEPTH  # max=12, but will create 11 such shared prompts
         assert cfg_imsize == clip_imsize, f"cfg_imsize ({cfg_imsize}) must equal to clip_imsize ({clip_imsize})"
 
-
-        ctx_init = ctx_init.replace("_", " ")
-        n_ctx = n_ctx
-        prompt = clip.tokenize(ctx_init)
-        with torch.no_grad():
-            embedding = clip_model.token_embedding(prompt)
+        if ctx_init and (n_ctx) <= 4:
+            # use given words to initialize context vectors
+            ctx_init = ctx_init.replace("_", " ")
+            n_ctx = n_ctx
+            prompt = clip.tokenize(ctx_init)
+            with torch.no_grad():
+                embedding = clip_model.token_embedding(prompt).type(dtype)
             ctx_vectors = embedding[0, 1: 1 + n_ctx, :]
             prompt_prefix = ctx_init
-        
-        ctx = ctx_vectors.type(dtype)
-        ctx_vectors = ctx_vectors.reshape((1,1,32,32))
-        self.up = torch.nn.Upsample(scale_factor=7, mode='bilinear').cuda()
-        ctx_vectors=self.up(ctx_vectors).type(dtype)
-
-        
+        else:
+            # random initialization
+            ctx_vectors = torch.empty(n_ctx, ctx_dim, dtype=dtype)
+            nn.init.normal_(ctx_vectors, std=0.02)
+            prompt_prefix = " ".join(["X"] * n_ctx)
         print('MaPLe design: Multi-modal Prompt Learning')
         print(f'Initial context: "{prompt_prefix}"')
         print(f"Number of MaPLe context words (tokens): {n_ctx}")
         # These below, related to the shallow prompts
         # Linear layer so that the tokens will project to 512 and will be initialized from 768
+        self.ctx = nn.Parameter(ctx_vectors)
         self.proj = nn.Linear(ctx_dim, 768)
         self.proj.half()
-        self.text_ctx = nn.Parameter(ctx_vectors)
-        self.ctx = nn.Parameter(ctx)
+        # self.ctx = nn.Parameter(ctx_vectors)
+        # These below parameters related to the shared prompts
+        # Define the compound prompts for the deeper layers
+
+        # Minimum can be 1, which defaults to shallow MaPLe
+        # compound prompts
+        #self.compound_prompts_text = nn.ParameterList([nn.Parameter(torch.empty(n_ctx, 512))
+        #                                              for _ in range(self.compound_prompts_depth - 1)])
+        #for single_para in self.compound_prompts_text:
+        #    nn.init.normal_(single_para, std=0.02)
+        # Also make corresponding projection layers, for each prompt
+        single_layer = nn.Linear(ctx_dim, 768)
+        self.compound_prompt_projections = _get_clones(single_layer, self.compound_prompts_depth - 1)
 
         classnames = [name.replace("_", " ") for name in classnames]
         name_lens = [len(_tokenizer.encode(name)) for name in classnames]
@@ -302,9 +312,10 @@ class QuaternionMultiModalPromptLearner(nn.Module):
         self.tokenized_prompts = tokenized_prompts  # torch.Tensor
         self.name_lens = name_lens
         
-        self.met_proj = nn.Linear(768,512)
-        self.qenc = QuaternionEncoder(depth = self.compound_prompts_depth, 
-                                      in_channels=2, latent_dim=512, n_ctx=self.n_ctx)
+        self.up1 = torch.nn.Upsample(scale_factor=(2,1), mode='bilinear').cuda()
+        self.up2 = torch.nn.Upsample(scale_factor=7, mode='bilinear').cuda()
+        
+        self.qenc = QuaternionEncoder(in_channels=4,latent_dim=256)
         
 
     def construct_prompts(self, ctx, prefix, suffix, label=None):
@@ -328,20 +339,34 @@ class QuaternionMultiModalPromptLearner(nn.Module):
 
         return prompts
 
-    def forward(self, image_embedding, text_embeding):
+    def forward(self, image, text_embeding):
         
+        # image shape (Batch_Size, 3, 224, 224 )
+        # text embedding shape (Batch_Size, 512)
+        
+        # FIRST> Split images in RGB
+        
+        image_r = image[:,0,:,:].reshape((-1,1,224,224))
+        image_g = image[:,1,:,:].reshape((-1,1,224,224))
+        image_b = image[:,2,:,:].reshape((-1,1,224,224))
+        
+        
+        # SECOND> Adjust Text embedding shape 
+        # from (Batch size, 512) to (Batch size , 1, 224, 224)
+        text_embeding = text_embeding.reshape((-1,1,16,32))  
+        text_embeding = self.up1(text_embeding)
+        text_embeding = self.up2(text_embeding)
+        
+        # Third> Compress using Quaternion Encoder
+        quaternion_input = torch.cat([text_embeding,image_r,image_g,image_b],dim=1)
 
-        # FIRST> image embedding projection
-        #meta_img = self.met_proj(image_embedding)
-        
-
-        # SECOND> Compress using Hypercomplex Encoder
-        
-        quaternion_input = torch.cat([image_embedding,text_embeding],dim=1)
-        
         quaternion_features = self.qenc(quaternion_input)
+        quaternion_features = quaternion_features.reshape(-1,2,512)[0]
+        quaternion_features = quaternion_features.clamp(-7000,7000)
+        #print(quaternion_features.shape)
         
-        compound_prompts_text,visual_deep_prompts=quaternion_features
+        #ctx = quaternion_features.half()
+        #self.ctx = ctx
         
         ctx = self.ctx
 
@@ -352,6 +377,18 @@ class QuaternionMultiModalPromptLearner(nn.Module):
         suffix = self.token_suffix
         prompts = self.construct_prompts(ctx, prefix, suffix)
 
+        compound_prompts_text = [quaternion_features for _ in range(self.compound_prompts_depth - 1)]
+        
+        # Before returning, need to transform
+        # prompts to 768 for the visual side
+        visual_deep_prompts = []
+        for index, layer in enumerate(self.compound_prompt_projections):
+            visual_deep_prompts.append(layer(compound_prompts_text[index]))
+        # Now the other way around
+        # We will project the textual prompts from 512 to 768
+        #print(prompts.type())
+        #print(self.ctx.type())
+        #print(compound_prompts_text[0].type())
         return prompts, self.proj(self.ctx), compound_prompts_text, visual_deep_prompts   # pass here original, as for visual 768 is required
 
 class CustomCLIP(nn.Module):
@@ -378,6 +415,7 @@ class CustomCLIP(nn.Module):
         with torch.no_grad():
             # num_classes x 512
             text_features_first = self.text_encoder(self.prompt_learner.embedding.cuda(), self.prompt_learner.tokenized_prompts.cuda(), [])
+
             # Batch_Size x 512 
             image_features_first = self.image_encoder(image.type(self.dtype), [], [])   
 
@@ -395,7 +433,7 @@ class CustomCLIP(nn.Module):
         
         #SECONDA PASSATA
 
-        prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner(image_features_first, selected_text_features_first)
+        prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner(image, selected_text_features_first)
         
         
         
